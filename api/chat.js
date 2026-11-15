@@ -1,23 +1,25 @@
-// api/chat.js
 import Groq from 'groq-sdk';
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).end();
-  
   try {
     const { message, history, action } = req.body;
-    
-    // ... rest of your logic ...
-    
-    const completion = await groq.chat.completions.create({
-    messages: [ ... ],
-    model: "llama-3.1-8b-instant", // Update this line
-});
+    const systemPrompt = action === "generate_scenario" 
+      ? "You are a banking customer. Generate a random banking problem and your opening line. Keep it to 2 sentences."
+      : "You are a bank customer. Keep responses short. If the user asks for a grade, output a JSON object with Plan, Engage, Transition, Recommend.";
 
-    return res.status(200).json({ reply: completion.choices[0].message.content });
+    const completion = await groq.chat.completions.create({
+        messages: [
+            { role: "system", content: systemPrompt },
+            ...history,
+            { role: "user", content: message }
+        ],
+        model: "llama-3.1-8b-instant",
+    });
+
+    res.status(200).json({ reply: completion.choices[0].message.content });
   } catch (error) {
-    return res.status(500).json({ reply: "Error: " + error.message });
+    res.status(500).json({ reply: "Error: " + error.message });
   }
 }

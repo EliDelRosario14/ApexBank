@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apex Bank - BPO Training Tool</title>
+    <style>
+        :root { --primary: #004d40; --secondary: #00796b; --bg: #f4f6f8; --card: #ffffff; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .card { background: var(--card); padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h2 { margin-top: 0; color: var(--primary); }
+        .phone-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; text-align: center; }
+        .status-badge { padding: 6px 12px; border-radius: 20px; font-weight: bold; font-size: 14px; margin-bottom: 20px; }
+        .status-idle { background: #e0e0e0; color: #616161; }
+        .status-active { background: #c8e6c9; color: #2e7d32; }
+        button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .btn-start { background: var(--primary); color: white; }
+        .btn-start:hover { background: var(--secondary); }
+        .btn-end { background: #c62828; color: white; display: none; margin-top: 10px; }
+        .transcript-box { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px; background: #fafafa; text-align: left; font-size: 14px; }
+        .msg { margin-bottom: 10px; padding: 8px; border-radius: 4px; }
+        .msg.associate { background: #e3f2fd; text-align: right; }
+        .msg.customer { background: #e8f5e9; }
+        .scorecard { display: none; }
+        .score-item { display: flex; justify-content: space-between; margin-bottom: 10px; font-weight: bold; }
+        .score-val { color: var(--primary); }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="card phone-panel">
+            <h2>Associate Softphone</h2>
+            <div id="statusBadge" class="status-badge status-idle">Status: Ready</div>
+            <p id="instruction" style="font-size: 14px; color: #666;">Click "Start Call" to receive a randomly generated customer complaint.</p>
+            <button id="talkBtn" class="btn-start" onclick="startCall()">Start Call</button>
+            <button id="endBtn" class="btn-end" onclick="endCall()">End Call & Grade</button>
+        </div>
+
+        <div>
+            <div class="card" style="margin-bottom: 20px;">
+                <h3>Live Call Transcript</h3>
+                <div id="transcriptBox" class="transcript-box"><em>Waiting for incoming call...</em></div>
+            </div>
+            <div class="card scorecard" id="scoreCard">
+                <h3>PETR Scorecard</h3>
+                <div class="score-item"><span>Plan:</span> <span id="scorePlan" class="score-val">-</span></div>
+                <div class="score-item"><span>Engage:</span> <span id="scoreEngage" class="score-val">-</span></div>
+                <div class="score-item"><span>Transition:</span> <span id="scoreTransition" class="score-val">-</span></div>
+                <div class="score-item"><span>Recommend:</span> <span id="scoreRecommend" class="score-val">-</span></div>
+                <p id="scoreFeedback" style="font-size: 13px; color: #555; margin-top: 15px;"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let history = [];
+        const synth = window.speechSynthesis;
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onresult = async (e) => {
+            const associateText = e.results[0][0].transcript;
+            appendMessage("Associate (You)", associateText, "associate");
+            history.push({role: "user", content: associateText});
+            document.getElementById('statusBadge').innerText = 'Status: Customer Speaking...';
+
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: associateText, history, action: "chat" })
+            });
+            const data = await res.json();
+            history.push({role: "assistant", content: data.reply});
+
+            if (data.reply.includes("{")) {
+                parseScorecard(data.reply);
+            } else {
+                appendMessage("AI Customer", data.reply, "customer");
+                speakAICustomer(data.reply);
+            }
+        };
+
+        function speakAICustomer(text) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            synth.speak(utterance);
+            utterance.onend = () => {
+                document.getElementById('statusBadge').innerText = 'Status: Listening (Your Turn)...';
+                try { recognition.start(); } catch(e) {}
+            };
+        }
+
+        async function startCall() {
+            document.getElementById('talkBtn').style.display = 'none';
+            document.getElementById('endBtn').style.display = 'block';
+            document.getElementById('statusBadge').className = 'status-badge status-active';
+            document.getElementById('statusBadge').innerText = 'Status: Generating Scenario...';
+            document.getElementById('transcriptBox').innerHTML = "";
+            history = [];
+
+            // Ask backend to generate a RANDOM customer problem
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: "Generate scenario", history: [], action: "generate_scenario" })
+            });
+            const data = await res.json();
+            
+            appendMessage("AI Customer", data.reply, "customer");
+            history.push({role: "assistant", content: data.reply});
+            speakAICustomer(data.reply);
+        }
+
+        function endCall() {
+            recognition.stop();
+            synth.cancel();
+            document.getElementById('statusBadge').className = 'status-badge status-idle';
+            document.getElementById('statusBadge').innerText = 'Status: Call Ended. Grading PETR...';
+            document.getElementById('endBtn').style.display = 'none';
+
+            fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: "Provide the final PETR scorecard in JSON format.", history, action: "grade" })
+            }).then(res => res.json()).then(data => {
+                parseScorecard(data.reply);
+            });
+        }
+
+        function parseScorecard(rawText) {
+            try {
+                const jsonString = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+                const scores = JSON.parse(jsonString);
+                document.getElementById('scorePlan').innerText = scores.Plan;
+                document.getElementById('scoreEngage').innerText = scores.Engage;
+                document.getElementById('scoreTransition').innerText = scores.Transition;
+                document.getElementById('scoreRecommend').innerText = scores.Recommend;
+                document.getElementById('scoreFeedback').innerText = scores.Feedback;
+                document.getElementById('scoreCard').style.display = 'block';
+                document.getElementById('statusBadge').innerText = 'Status: Call Evaluated';
+            } catch (err) {
+                document.getElementById('scoreFeedback').innerText = "Raw Output: " + rawText;
+                document.getElementById('scoreCard').style.display = 'block';
+            }
+        }
+
+        function appendMessage(sender, text, type) {
+            const box = document.getElementById('transcriptBox');
+            box.innerHTML += `<div class="msg ${type}"><strong>${sender}:</strong> ${text}</div>`;
+            box.scrollTop = box.scrollHeight;
+        }
+    </script>
+</body>
+</html>

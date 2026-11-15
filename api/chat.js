@@ -12,13 +12,9 @@ export default async function handler(req, res) {
     // ... rest of your logic ...
     
     const completion = await groq.chat.completions.create({
-        messages: [
-            { role: "system", content: "You are a banking customer." },
-            ...history,
-            { role: "user", content: message }
-        ],
-        model: "llama3-8b-8192",
-    });
+    messages: [ ... ],
+    model: "llama-3.1-8b-instant", // Update this line
+});
 
     return res.status(200).json({ reply: completion.choices[0].message.content });
   } catch (error) {

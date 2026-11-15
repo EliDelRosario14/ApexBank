@@ -15,7 +15,7 @@ export default async function handler(req, res) {
             ...history,
             { role: "user", content: message }
         ],
-        model: "llama-3.3-70b-versatile",
+        model: "llama-3.1-8b-instant",
     });
 
     res.status(200).json({ reply: completion.choices[0].message.content });

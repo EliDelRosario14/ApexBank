@@ -30,16 +30,23 @@ export default async function handler(req, res) {
       NEVER pretend to be the bank representative. NEVER give support instructions.`;
     }
 
-    // STEP 2: Strict list of standard Groq chat models ONLY
+    // STEP 2: Sanitize history so only valid role/content objects pass through
+    const cleanHistory = Array.isArray(history)
+      ? history
+          .filter(item => item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string')
+          .map(item => ({ role: item.role, content: item.content }))
+      : [];
+
+    // STEP 3: Currently active 2025 Groq Production Chat Models
     const modelsToTry = [
       "llama-3.3-70b-versatile",
       "llama-3.1-8b-instant",
-      "gemma2-9b-it"
+      "deepseek-r1-distill-llama-70b"
     ];
 
-    let lastError = "";
+    let errorLogs = [];
 
-    // STEP 3: Try standard chat models in sequence
+    // STEP 4: Try models in sequence
     for (const model of modelsToTry) {
       const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
@@ -51,7 +58,7 @@ export default async function handler(req, res) {
           model: model,
           messages: [
             { role: "system", content: systemPrompt },
-            ...(Array.isArray(history) ? history : []),
+            ...cleanHistory,
             { role: "user", content: message || "Hello" }
           ],
           temperature: action === "grade" ? 0.1 : 0.7
@@ -64,10 +71,10 @@ export default async function handler(req, res) {
         return res.status(200).json({ reply: data.choices[0].message.content });
       }
 
-      lastError = `${model}: ${data.error?.message || response.statusText}`;
+      errorLogs.push(`[${model}: ${data.error?.message || response.statusText}]`);
     }
 
-    return res.status(200).json({ reply: `Groq Error: ${lastError}` });
+    return res.status(200).json({ reply: `Groq Error: ${errorLogs.join(" | ")}` });
 
   } catch (error) {
     return res.status(200).json({ reply: "Server Exception: " + error.message });

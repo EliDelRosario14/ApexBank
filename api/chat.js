@@ -17,46 +17,54 @@ export default async function handler(req, res) {
 
     const modelsData = await modelsResponse.json();
 
-    if (!modelsResponse.ok || !modelsData.data || modelsData.data.length === 0) {
+    if (!modelsResponse.ok || !modelsData.data) {
       return res.status(200).json({ 
-        reply: `Groq Key Error (${modelsResponse.status}): ${modelsData.error?.message || "Invalid or revoked API key."}` 
+        reply: `Groq Key Error: ${modelsData.error?.message || "Invalid API Key."}` 
       });
     }
 
-    // STEP 2: Filter OUT security guardrails, audio, and vision models
+    // Filter ONLY standard Meta Llama / Gemma text chat models
     const validChatModels = modelsData.data
       .map(m => m.id)
       .filter(id => {
         const lower = id.toLowerCase();
-        return !lower.includes("guard") && 
+        return (lower.includes("llama") || lower.includes("gemma") || lower.includes("mixtral")) &&
+               !lower.includes("guard") && 
                !lower.includes("whisper") && 
-               !lower.includes("embed") &&
                !lower.includes("vision") &&
-               !lower.includes("safetensors");
+               !lower.includes("orpheus") &&
+               !lower.includes("canopylabs");
       });
 
-    // Prioritize standard conversational models
     const preferredModels = [
       "llama-3.3-70b-versatile",
       "llama-3.1-8b-instant",
       "gemma2-9b-it"
     ];
 
-    let selectedModel = preferredModels.find(p => validChatModels.includes(p)) || validChatModels[0];
+    let selectedModel = preferredModels.find(p => validChatModels.includes(p)) || validChatModels[0] || "llama-3.1-8b-instant";
 
-    if (!selectedModel) {
-      return res.status(200).json({ reply: "Error: No valid conversational models found for your key." });
-    }
-
-    // STEP 3: Setup System Prompt
+    // STEP 2: Strict Prompts for Roleplay & Grading
     let systemPrompt = "";
+
     if (action === "generate_scenario") {
-      systemPrompt = "You are a customer service simulator for a bank. Generate a random frustrated customer issue and opening line in 2 short sentences. Do NOT output JSON.";
-    } else {
-      systemPrompt = "You are a banking customer roleplaying with an associate. Keep replies short (1-2 sentences). If the associate ends the call or asks for a score, output ONLY JSON: {\"Plan\": \"8/10\", \"Engage\": \"7/10\", \"Transition\": \"9/10\", \"Recommend\": \"8/10\", \"Feedback\": \"Good greeting.\"}";
+      systemPrompt = `You are a bank CUSTOMER calling support. State your issue in 1-2 natural sentences. 
+      Do NOT act as the bank associate. Do NOT give advice. State a problem like a missing payment, unknown fee, or locked app.`;
+    } 
+    else if (action === "grade" || message.includes("Provide the final PETR scorecard")) {
+      systemPrompt = `You are a BPO Quality Assurance Manager evaluating the Bank Associate.
+      Evaluate their call based on the PETR framework (Plan, Engage, Transition, Recommend).
+      Output ONLY a valid JSON object in this exact structure with no extra text:
+      {"Plan": "8/10", "Engage": "7/10", "Transition": "9/10", "Recommend": "8/10", "Feedback": "Constructive feedback here."}`;
+    } 
+    else {
+      systemPrompt = `CRITICAL INSTRUCTION: You are ONLY the BANK CUSTOMER on the phone.
+      The human user is the BANK ASSOCIATE helping you. 
+      Remain in character as the customer. Keep replies short (1-2 sentences).
+      NEVER give customer support advice. NEVER pretend to be the agent. Answer their questions or state your concerns as a customer.`;
     }
 
-    // STEP 4: Request Completion from selected Chat Model
+    // STEP 3: Request AI Response
     const chatResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -70,7 +78,7 @@ export default async function handler(req, res) {
           ...(Array.isArray(history) ? history : []),
           { role: "user", content: message || "Hello" }
         ],
-        temperature: 0.7
+        temperature: action === "grade" ? 0.2 : 0.7
       })
     });
 

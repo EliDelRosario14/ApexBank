@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   try {
     const { message, history, action } = req.body;
 
-    // STEP 1: Dynamically fetch active models from Groq for your key
+    // STEP 1: Fetch active models dynamically
     const modelsResponse = await fetch("https://api.groq.com/openai/v1/models", {
       headers: { "Authorization": `Bearer ${apiKey}` }
     });
@@ -19,15 +19,36 @@ export default async function handler(req, res) {
 
     if (!modelsResponse.ok || !modelsData.data || modelsData.data.length === 0) {
       return res.status(200).json({ 
-        reply: `Groq Key Error (${modelsResponse.status}): ${modelsData.error?.message || "Invalid or revoked API key. Please generate a new key at console.groq.com"}` 
+        reply: `Groq Key Error (${modelsResponse.status}): ${modelsData.error?.message || "Invalid or revoked API key."}` 
       });
     }
 
-    // Filter and select an active text generation model
-    const availableModels = modelsData.data.map(m => m.id);
-    const selectedModel = availableModels.find(m => m.includes("llama") || m.includes("gemma") || m.includes("mixtral") || m.includes("qwen")) || availableModels[0];
+    // STEP 2: Filter OUT security guardrails, audio, and vision models
+    const validChatModels = modelsData.data
+      .map(m => m.id)
+      .filter(id => {
+        const lower = id.toLowerCase();
+        return !lower.includes("guard") && 
+               !lower.includes("whisper") && 
+               !lower.includes("embed") &&
+               !lower.includes("vision") &&
+               !lower.includes("safetensors");
+      });
 
-    // STEP 2: Define System Prompt
+    // Prioritize standard conversational models
+    const preferredModels = [
+      "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant",
+      "gemma2-9b-it"
+    ];
+
+    let selectedModel = preferredModels.find(p => validChatModels.includes(p)) || validChatModels[0];
+
+    if (!selectedModel) {
+      return res.status(200).json({ reply: "Error: No valid conversational models found for your key." });
+    }
+
+    // STEP 3: Setup System Prompt
     let systemPrompt = "";
     if (action === "generate_scenario") {
       systemPrompt = "You are a customer service simulator for a bank. Generate a random frustrated customer issue and opening line in 2 short sentences. Do NOT output JSON.";
@@ -35,7 +56,7 @@ export default async function handler(req, res) {
       systemPrompt = "You are a banking customer roleplaying with an associate. Keep replies short (1-2 sentences). If the associate ends the call or asks for a score, output ONLY JSON: {\"Plan\": \"8/10\", \"Engage\": \"7/10\", \"Transition\": \"9/10\", \"Recommend\": \"8/10\", \"Feedback\": \"Good greeting.\"}";
     }
 
-    // STEP 3: Generate response using the automatically selected model
+    // STEP 4: Request Completion from selected Chat Model
     const chatResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
